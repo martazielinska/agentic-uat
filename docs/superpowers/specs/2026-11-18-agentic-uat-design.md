@@ -137,7 +137,7 @@ Consider completion, discoverability, navigation effort, feedback, and
 observed responsiveness. Explain which evidence supports the chosen
 anchor; do not derive scores from invented click or latency thresholds.
 
-Unexecuted journeys and those blocked by setup, access, or action policy
+Unexecuted or incomplete journeys and those blocked by setup, access, or action policy
 remain unscored. Partial evidence must not imply complete success.
 Do not treat unscored journeys as zero or include them in score averages.
 

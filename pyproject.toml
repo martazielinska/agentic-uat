@@ -1,0 +1,36 @@
+[project]
+name = "agentic-uat"
+version = "0.1.0"
+description = "Copilot-native user acceptance testing with evidence-backed HTML reports"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.15,<1",
+    "pydantic>=2.10,<3",
+    "PyYAML>=6,<7",
+    "Jinja2>=3.1.6,<4",
+    "Pillow>=11,<13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+agentic-uat = "agentic_uat.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11", "mypy>=1.15", "types-PyYAML>=6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_uat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
