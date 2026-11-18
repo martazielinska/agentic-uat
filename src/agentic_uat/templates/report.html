@@ -4,260 +4,152 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; connect-src 'none'">
-  <title>{{ manifest.project.name }} | UAT report</title>
+  <title>{{ manifest.project.name }} | UAT feedback</title>
   <style>
-    :root { color-scheme: light; --ink:#192b37; --muted:#52636d; --paper:#f5f4ee; --line:#d7dedb; --green:#245c4b; --orange:#9a471d; }
+    :root { color-scheme:light; --ink:#192b37; --muted:#52636d; --paper:#f5f4ee; --line:#d7dedb; --green:#245c4b; --orange:#9a471d; }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    a { color:var(--green); overflow-wrap:anywhere; }
-    button,select { font:inherit; }
-    :focus-visible { outline:3px solid #aa511b; outline-offset:4px; }
-    .shell { max-width:1200px; margin:auto; padding:0 32px; }
-    header { background:var(--ink); color:#f8f6ef; padding:44px 0 36px; }
-    .eyebrow { font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .shell { max-width:1100px; margin:auto; padding:0 32px; }
+    header { background:var(--ink); color:#f8f6ef; padding:38px 0; }
     .header-row { display:flex; justify-content:space-between; align-items:start; gap:24px; }
-    h1 { font-size:clamp(28px,4vw,48px); line-height:1.15; max-width:850px; margin:14px 0; overflow-wrap:anywhere; }
-    h2 { font-size:26px; letter-spacing:-.03em; margin:0 0 16px; }
-    h3 { margin:0; font-size:19px; line-height:1.4; }
-    h4 { font-size:14px; margin:24px 0 8px; }
+    .eyebrow { font-size:12px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { font-size:clamp(28px,4vw,44px); line-height:1.15; margin:12px 0; overflow-wrap:anywhere; }
+    h2 { font-size:24px; margin:0 0 16px; }
+    h3 { font-size:20px; line-height:1.3; margin:8px 0 14px; }
     p { margin:8px 0; }
-    .subtle { color:var(--muted); font-size:14px; }
-    header .subtle { color:#bfcec9; }
-    .print-button { background:transparent; color:inherit; border:1px solid #788d92; border-radius:6px; padding:8px 15px; cursor:pointer; white-space:nowrap; }
-    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; border:1px solid var(--line); background:var(--line); border-radius:10px; overflow:hidden; margin:30px 0 40px; }
-    .stat { background:#fff; padding:20px 24px; }
-    .stat strong { display:block; font-size:30px; line-height:1.2; }
-    .stat span { color:var(--muted); font-size:14px; }
-    section { margin:36px 0; }
-    .persona-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
-    .persona { border:1px solid var(--line); border-top:3px solid var(--green); border-radius:8px; background:#fff; padding:24px; }
-    .role { color:var(--green); font-size:13px; font-weight:700; margin-bottom:12px; }
-    dl { margin:14px 0 0; }
-    dt { color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; margin-top:12px; }
-    dd { margin:4px 0 0; }
-    ul { padding-left:20px; margin:6px 0; }
-    .notice { border-left:3px solid #b66a24; background:#fff4e5; border-radius:4px; padding:16px 20px; }
-    .notice h2 { font-size:18px; margin-bottom:8px; }
-    .section-heading { display:flex; align-items:baseline; gap:14px; }
-    .filters { display:flex; flex-wrap:wrap; gap:16px; padding:18px 20px; border:1px solid var(--line); border-radius:8px; background:#eeeee7; margin:0 0 18px; }
-    .filters label { font-size:12px; font-weight:700; display:flex; flex-direction:column; gap:5px; }
-    select { color:var(--ink); background:#fff; border:1px solid #aebcb7; border-radius:4px; min-width:170px; padding:6px 30px 6px 10px; }
-    .journey { margin:14px 0; border:1px solid var(--line); border-radius:8px; background:#fff; overflow:hidden; }
-    .journey[hidden] { display:none; }
-    summary { display:flex; align-items:center; gap:20px; padding:22px 24px; cursor:pointer; list-style:none; }
-    summary::-webkit-details-marker { display:none; }
-    summary::after { content:"+"; font-size:26px; margin-left:auto; color:var(--green); }
-    details[open] > summary::after { content:"-"; }
-    summary:hover { background:#f6faf8; }
-    .journey-title { flex:1; min-width:0; }
-    .journey-title small { color:var(--muted); display:block; margin-bottom:3px; }
-    .grade { min-width:58px; text-align:center; font-size:22px; font-weight:700; color:var(--green); }
-    .grade.unscored { color:var(--muted); font-size:13px; }
-    .badge { display:inline-block; font-size:12px; font-weight:600; padding:3px 9px; border:1px solid var(--line); border-radius:20px; color:var(--muted); white-space:nowrap; }
-    .badge.completed { background:#e9f4ed; color:var(--green); border-color:#c5dfd0; }
-    .badge.application_blocked,.badge.setup_blocked,.badge.policy_blocked { background:#fff1df; color:var(--orange); border-color:#edd4b4; }
-    .journey-body { border-top:1px solid var(--line); padding:24px; }
-    .columns { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
-    .metrics { display:flex; flex-wrap:wrap; gap:24px; border:1px solid var(--line); padding:16px 20px; border-radius:6px; margin:20px 0; }
-    .metrics strong { display:block; font-size:20px; }
-    .metrics span { font-size:12px; color:var(--muted); }
-    .finding { border-left:3px solid #bdcfc5; padding:2px 0 2px 16px; margin:18px 0; }
-    .finding.major,.finding.critical { border-color:#b75d3e; }
-    .evidence { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
-    .scoring { background:#f0f5f1; padding:18px; border-radius:6px; }
-    .timeline { padding-left:24px; }
-    .timeline li { margin:16px 0; padding-left:8px; }
-    time { font-variant-numeric:tabular-nums; }
-    .screenshots { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:18px; }
-    figure { margin:0; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
-    figure img { display:block; width:100%; height:auto; background:#e7eeea; }
-    figcaption { padding:12px 14px; font-size:13px; }
-    .missing { padding:20px; color:var(--orange); }
-    footer { padding:24px 0 40px; border-top:1px solid var(--line); margin-top:40px; }
-    .empty { border:1px dashed #aebcb7; padding:30px; text-align:center; }
-    [hidden] { display:none !important; }
-    @media(max-width:700px) { .shell { padding:0 18px; } header { padding:28px 0; } .header-row { flex-direction:column; } .stats { margin:22px 0; } .stat { padding:16px 12px; } .stat strong { font-size:24px; } summary { gap:12px; padding:18px 14px; flex-wrap:wrap; } .journey-title { flex-basis:60%; } .journey-body { padding:18px; } .columns { grid-template-columns:1fr; gap:12px; } }
-    @media print { body { background:#fff; } header { background:#fff; color:#192b37; } header .subtle { color:#52636d; } .print-button,.filters { display:none; } .shell { max-width:none; padding:0; } .journey { break-inside:avoid; } .journey[hidden] { display:block !important; } .stats { margin:15px 0; } }
+    .muted { color:var(--muted); font-size:14px; }
+    header .muted { color:#bfcec9; }
+    .overview { max-width:800px; }
+    .print-button { background:transparent; color:inherit; border:1px solid #788d92; border-radius:6px; padding:8px 15px; font:inherit; white-space:nowrap; cursor:pointer; }
+    :focus-visible { outline:3px solid #aa511b; outline-offset:4px; }
+    main section { margin:36px 0; }
+    .notice { border-left:3px solid #b66a24; background:#fff4e5; padding:14px 18px; }
+    .outcomes { border-collapse:collapse; width:100%; background:#fff; }
+    .outcomes th,.outcomes td { border-bottom:1px solid var(--line); padding:14px 16px; text-align:left; vertical-align:top; }
+    .outcomes thead th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+    .outcomes tbody th { width:55%; }
+    .outcomes .muted { display:block; font-weight:400; }
+    .status { font-weight:600; }
+    .status.completed { color:var(--green); }
+    .status.application_blocked,.status.setup_blocked,.status.policy_blocked { color:var(--orange); }
+    .finding { background:#fff; border:1px solid var(--line); border-left:4px solid #b7cfc2; border-radius:6px; padding:22px 24px; margin:16px 0; }
+    .finding.major,.finding.critical { border-left-color:#b75d3e; }
+    .finding.minor { border-left-color:#c98c43; }
+    .meta { color:var(--muted); font-size:13px; }
+    .badge { display:inline-block; border-radius:20px; background:#f3eee7; padding:2px 9px; font-size:12px; font-weight:700; color:var(--orange); }
+    .badge.info { color:var(--green); background:#e9f4ed; }
+    dl { margin:0; }
+    .detail { margin:8px 0; }
+    dt { display:inline; font-weight:700; }
+    dd { display:inline; margin:0; }
+    .evidence { margin-top:18px; display:grid; gap:14px; }
+    figure { margin:0; border:1px solid var(--line); border-radius:5px; overflow:hidden; break-inside:avoid; }
+    .image-scroll { overflow-x:auto; }
+    figure img { display:block; max-width:100%; width:100%; height:auto; background:#e7eeea; }
+    figcaption { padding:9px 12px; font-size:13px; color:var(--muted); }
+    .scroll-hint { display:none; }
+    .missing { padding:12px; color:var(--orange); }
+    footer { border-top:1px solid var(--line); padding:22px 0 35px; }
+    @media(max-width:700px) {
+      .shell { padding:0 18px; }
+      header { padding:26px 0; }
+      .header-row { flex-direction:column; }
+      .outcomes th,.outcomes td { padding:10px 8px; }
+      .finding { padding:18px; }
+      .image-scroll img { min-width:720px; max-width:none; }
+      .scroll-hint { display:inline; }
+    }
+    @media print {
+      body { background:#fff; }
+      header { background:#fff; color:var(--ink); padding:0; }
+      header .muted { color:var(--muted); }
+      .shell { max-width:none; padding:0; }
+      .print-button { display:none; }
+      .finding { border-color:#bbb; break-inside:avoid; }
+      .finding-summary { break-inside:avoid; }
+      .image-scroll { overflow:visible; }
+      .image-scroll img { min-width:0; max-width:90%; margin:auto; }
+      .scroll-hint { display:none; }
+    }
   </style>
 </head>
 <body>
   <header>
     <div class="shell header-row">
       <div>
-        <div class="eyebrow">Agentic UAT / Journey review</div>
+        <div class="eyebrow">User acceptance testing</div>
         <h1>{{ manifest.project.name }}</h1>
-        <p class="subtle">Run {{ manifest.run_id }} &middot; <time>{{ manifest.created_at.isoformat() }}</time></p>
-        <p class="subtle">Agent observations, supported by recorded actions and screenshots.</p>
+        <p class="muted">{{ manifest.created_at.strftime('%d %b %Y') }}{% if content and content.scope %} &middot; {{ content.scope }}{% endif %}</p>
+        {% if content and content.overview %}<p class="overview">{{ content.overview }}</p>{% endif %}
       </div>
-      <button class="print-button" id="print-report" type="button">Print report</button>
+      <button class="print-button" type="button" onclick="window.print()">Print report</button>
     </div>
   </header>
   <main class="shell">
-    <div class="stats" aria-label="Run overview">
-      <div class="stat"><strong>{{ manifest.project.personas|length }}</strong><span>Personas</span></div>
-      <div class="stat"><strong>{{ completed_count }} / {{ views|length }}</strong><span>Journeys completed</span></div>
-      <div class="stat"><strong>{{ scored_count }} / {{ views|length }}</strong><span>Journeys scored</span></div>
-    </div>
-
-    {% if warnings %}
-    <section class="notice" aria-label="Evidence limitations">
-      <h2>Evidence needs attention</h2>
-      <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
-    </section>
+    {% if blocked_capabilities %}
+    <section class="notice">Run stopped before any journey: required browser or delegation tools were unavailable ({{ blocked_capabilities|join(', ') }}).</section>
     {% endif %}
 
-    <section aria-labelledby="personas-heading">
-      <h2 id="personas-heading">Who the journeys represent</h2>
-      <div class="persona-grid">
-        {% for persona in manifest.project.personas %}
-        <article class="persona">
-          <h3>{{ persona.name }}</h3>
-          <p class="role">{{ persona.role }}</p>
-          <p>{{ persona.description }}</p>
-          <dl>
-            <dt>Goals</dt><dd><ul>{% for goal in persona.goals %}<li>{{ goal }}</li>{% endfor %}</ul></dd>
-            <dt>Experience</dt><dd>{{ persona.experience }}</dd>
-            <dt>Permissions</dt><dd><ul>{% for permission in persona.permissions %}<li>{{ permission }}</li>{% endfor %}</ul></dd>
-          </dl>
-        </article>
-        {% endfor %}
-      </div>
+    <section aria-labelledby="outcomes-heading">
+      <h2 id="outcomes-heading">Task outcomes</h2>
+      <table class="outcomes">
+        <thead><tr><th scope="col">Task and persona</th><th scope="col">Outcome</th><th scope="col">Score</th></tr></thead>
+        <tbody>
+          {% for view in views %}
+          <tr>
+            <th scope="row">{{ view.journey.name }}<span class="muted">{{ view.persona.role }}</span></th>
+            <td>
+              <span class="status {{ view.status }}">{{ view.status_label }}</span>
+              {% if view.result and view.status in ('setup_blocked', 'policy_blocked', 'incomplete') %}<span class="muted">{{ view.result.summary }}</span>{% endif %}
+              {% if view.result and not view.result.ux %}<span class="muted">Criteria not assessed</span>{% endif %}
+            </td>
+            <td>{% if view.score and view.score.score is not none %}<strong>{{ view.score.score }}/5</strong><span class="muted">{{ view.score.confidence }} confidence</span>{% else %}Unscored{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">Scores: 1 = blocked; 2 = major workarounds; 3 = meaningful friction; 4 = minor friction; 5 = clear completion.</p>
     </section>
 
-    <section aria-labelledby="journeys-heading">
-      <div class="section-heading">
-        <h2 id="journeys-heading">Journey findings</h2>
-        <span class="subtle" id="visible-count" aria-live="polite">{{ views|length }} journeys</span>
+    {% macro finding_card(finding) %}
+    <article class="finding {{ finding.severity }}">
+      <div class="finding-summary">
+        <div class="meta"><span class="badge {{ finding.severity }}">{{ severity_labels[finding.severity] }}</span> &middot; {% if finding.location %}{{ finding.location }}{% else %}{{ finding.tasks|join(' / ') }}{% endif %}</div>
+        <h3>{{ finding.title }}</h3>
+        <dl>
+          <div class="detail"><dt>Observed:</dt> <dd>{{ finding.observation }}</dd></div>
+          {% if finding.impact %}<div class="detail"><dt>Impact:</dt> <dd>{{ finding.impact }}</dd></div>{% endif %}
+          <div class="detail"><dt>Suggested change:</dt> <dd>{{ finding.recommendation }}</dd></div>
+        </dl>
       </div>
-      <div class="filters" id="filters" hidden>
-        <label for="persona-filter">Persona
-          <select id="persona-filter"><option value="">All personas</option>{% for persona in manifest.project.personas %}<option value="{{ persona.id }}">{{ persona.name }}</option>{% endfor %}</select>
-        </label>
-        <label for="status-filter">Execution
-          <select id="status-filter">
-            <option value="">All statuses</option>
-            <option value="completed">Completed</option>
-            <option value="application_blocked">Application blocked</option>
-            <option value="setup_blocked">Setup blocked</option>
-            <option value="policy_blocked">Policy blocked</option>
-            <option value="incomplete">Incomplete</option>
-            <option value="not_executed">Not executed</option>
-          </select>
-        </label>
-        <label for="score-filter">Score
-          <select id="score-filter"><option value="">All scores</option>{% for number in range(1,6) %}<option value="{{ number }}">{{ number }}/5</option>{% endfor %}<option value="unscored">Unscored</option></select>
-        </label>
+      {% if finding.screenshots %}
+      <div class="evidence">
+        {% for screenshot in finding.screenshots %}
+        <figure>
+          {% if screenshot.data_url %}<div class="image-scroll" tabindex="0" role="region" aria-label="Screenshot: {{ screenshot.caption }}"><img src="{{ screenshot.data_url }}" alt="{{ screenshot.caption }}" loading="lazy"></div>{% else %}<p class="missing">Screenshot unavailable.</p>{% endif %}
+          <figcaption>{{ screenshot.caption }}{% if screenshot.captured_at %} <span>Captured {{ screenshot.captured_at.strftime('%d %b %Y %H:%M %Z') }}.</span>{% endif %}{% if screenshot.data_url %} <span class="scroll-hint">Scroll the image horizontally for detail.</span>{% endif %}</figcaption>
+        </figure>
+        {% endfor %}
       </div>
-      <noscript><p class="subtle">Filters require JavaScript. All journeys and details remain available below.</p></noscript>
-      {% for view in views %}
-      <article class="journey" data-persona="{{ view.persona.id }}" data-status="{{ view.status }}" data-score="{{ view.score.score if view.score and view.score.score is not none else 'unscored' }}">
-        <details>
-          <summary>
-            <div class="grade{% if not view.score or view.score.score is none %} unscored{% endif %}">{% if view.score and view.score.score is not none %}{{ view.score.score }}/5{% else %}Unscored{% endif %}</div>
-            <div class="journey-title"><small>{{ view.persona.name }} / {{ view.persona.role }}</small><h3>{{ view.journey.name }}</h3></div>
-            <span class="badge {{ view.status }}">{{ view.status_label }}</span>
-          </summary>
-          <div class="journey-body">
-            <div class="columns">
-              <div>
-                <h4>Task</h4>
-                <p>{{ view.journey.task }}</p>
-                <p class="subtle">Start: <a href="{{ view.journey.start_url }}" rel="noreferrer noopener" target="_blank">{{ view.journey.start_url }}</a></p>
-                <h4>Success criteria</h4>
-                <ul>{% for criterion in view.journey.success_criteria %}<li>{{ criterion }}</li>{% endfor %}</ul>
-              </div>
-              <div>
-                <h4>Assessment</h4>
-                {% if view.result %}<p>{{ view.result.summary }}</p>{% else %}<p>Not executed. No inspection evidence has been recorded.</p>{% endif %}
-                <div class="scoring">
-                  {% if view.score %}
-                  <p><strong>{% if view.score.score is not none %}{{ view.score.score }}/5{% else %}Unscored{% endif %}</strong> &middot; {{ view.score.confidence }} confidence</p>
-                  <p>{{ view.score.rationale }}</p>
-                  {% if view.score.evidence %}<p class="evidence">Evidence: {{ view.score.evidence|join(', ') }}</p>{% endif %}
-                  {% if view.score.limitations %}<ul class="subtle">{% for note in view.score.limitations %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
-                  {% else %}<p>Unscored. No independent scoring assessment has been recorded.</p>{% endif %}
-                </div>
-              </div>
-            </div>
-            {% if view.result %}
-            <div class="metrics">
-              <div><strong>{{ view.clicks }}</strong><span>Recorded clicks</span></div>
-              <div><strong>{{ "%.1f"|format(view.elapsed_seconds) }} s</strong><span>Tool-inclusive elapsed time</span></div>
-              <div><strong>{{ view.result.findings|length }}</strong><span>Findings</span></div>
-              <div><strong>{{ view.screenshots|selectattr('data_url')|list|length }}</strong><span>Available screenshots</span></div>
-            </div>
-            <p class="subtle">{{ view.result.timing_notes }}</p>
-            <p class="subtle">App timings below are individual observations, not a performance benchmark. Missing timings are unavailable.</p>
-            <h4>Inspection findings</h4>
-            {% for finding in view.result.findings %}
-            <div class="finding {{ finding.severity }}">
-              <p><span class="badge">{{ finding.severity }}</span> <strong>{{ finding.category }}</strong></p>
-              <p>{{ finding.observation }}</p>
-              <p class="subtle">{{ finding.recommendation }}</p>
-              <p class="evidence">{{ finding.id }} &middot; Evidence: {{ finding.evidence|join(', ') }}</p>
-            </div>
-            {% else %}<p class="subtle">No findings recorded.</p>{% endfor %}
-            {% if view.result.limitations %}
-            <h4>Inspection limitations</h4>
-            <ul>{% for note in view.result.limitations %}<li>{{ note }}</li>{% endfor %}</ul>
-            {% endif %}
-            <h4>Action log</h4>
-            <ol class="timeline">
-              {% for action in view.result.actions %}
-              <li>
-                <p><strong>{{ action.description }}</strong> <span class="badge">{{ action.kind }}</span></p>
-                <p>{{ action.outcome }}</p>
-                <p class="evidence">{{ action.id }} &middot; <time>{{ action.timestamp.isoformat() }}</time> &middot; App response: {% if action.application_ms is not none %}{{ action.application_ms }} ms{% else %}unavailable{% endif %}</p>
-              </li>
-              {% else %}<li>No application actions recorded.</li>{% endfor %}
-            </ol>
-            <h4>Screenshots</h4>
-            <div class="screenshots">
-              {% for screenshot in view.screenshots %}
-              <figure>
-                {% if screenshot.data_url %}<img src="{{ screenshot.data_url }}" alt="{{ screenshot.caption }}" loading="lazy">{% else %}<p class="missing">Missing screenshot: {{ screenshot.file }}</p>{% endif %}
-                <figcaption>{{ screenshot.caption }} <span class="evidence">({{ screenshot.id }})</span></figcaption>
-              </figure>
-              {% else %}<p class="subtle">No screenshots recorded. Visual evidence is unavailable.</p>{% endfor %}
-            </div>
-            {% endif %}
-          </div>
-        </details>
-      </article>
-      {% endfor %}
-      <p class="empty" id="empty-state" hidden>No journeys match these filters.</p>
+      {% endif %}
+    </article>
+    {% endmacro %}
+
+    {% set issues = findings|rejectattr('severity', 'equalto', 'info')|list %}
+    {% set strengths = findings|selectattr('severity', 'equalto', 'info')|list %}
+    <section aria-labelledby="issues-heading">
+      <h2 id="issues-heading">Issues to address</h2>
+      {% if findings|rejectattr('screenshots')|list %}<p class="muted">Some findings have no supporting screenshot.</p>{% endif %}
+      {% for finding in issues %}{{ finding_card(finding) }}{% else %}<p>No issues recorded for the assessed tasks. Unassessed tasks are not a clean bill of health.</p>{% endfor %}
     </section>
-    <section class="subtle" aria-label="Scoring guide">
-      <h2>Reading the scores</h2>
-      <p>1: application blocker &middot; 2: major workarounds &middot; 3: meaningful friction &middot; 4: minor friction &middot; 5: clear, efficient completion.</p>
-      <p>Setup, access, and policy blockers remain unscored. Agent assessments do not replace research with human participants.</p>
+
+    {% if strengths %}
+    <section aria-labelledby="strengths-heading">
+      <h2 id="strengths-heading">What works</h2>
+      {% for finding in strengths %}{{ finding_card(finding) }}{% endfor %}
     </section>
+    {% endif %}
   </main>
-  <footer class="shell subtle">Generated by agentic-uat. Evidence is embedded in this file; treat it as potentially sensitive.</footer>
-  <script>
-    (() => {
-      const filters = ['persona', 'status', 'score'].map(name => document.getElementById(name + '-filter'));
-      const journeys = Array.from(document.querySelectorAll('.journey'));
-      const update = () => {
-        let visible = 0;
-        journeys.forEach(journey => {
-          journey.hidden = !filters.every(filter => !filter.value || journey.dataset[filter.id.replace('-filter', '')] === filter.value);
-          if (!journey.hidden) visible += 1;
-        });
-        document.getElementById('visible-count').textContent = visible + (visible === 1 ? ' journey' : ' journeys');
-        document.getElementById('empty-state').hidden = visible !== 0;
-      };
-      filters.forEach(filter => filter.addEventListener('change', update));
-      document.getElementById('filters').hidden = false;
-      document.getElementById('print-report').addEventListener('click', () => {
-        const states = journeys.map(journey => journey.querySelector('details').open);
-        journeys.forEach(journey => { journey.querySelector('details').open = true; });
-        window.addEventListener('afterprint', () => {
-          journeys.forEach((journey, index) => { journey.querySelector('details').open = states[index]; });
-        }, {once: true});
-        window.print();
-      });
-    })();
-  </script>
+  <footer class="shell muted">Agent assessment; not a substitute for testing with users. This report may contain sensitive application data.</footer>
 </body>
 </html>

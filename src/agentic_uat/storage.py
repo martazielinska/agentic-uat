@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import warnings as py_warnings
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TypeVar
 
 import yaml
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from .models import (
     JourneyResult,
+    Preflight,
     Project,
+    ReportContent,
     RunBundle,
     RunManifest,
     Score,
@@ -21,7 +26,40 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 MEMORY_DIR = ".agentic-uat"
 PROJECT_FILE = "project.yaml"
 RUNS_DIR = "runs"
+PREFLIGHT_FILE = "preflight.json"
+REPORT_CONTENT_FILE = "report-content.json"
+SCORE_ELIGIBLE = {"completed", "application_blocked"}
+_IMAGE_TYPES = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+_MAX_IMAGE_BYTES = 12 * 1024 * 1024
+_MAX_IMAGE_PIXELS = 25_000_000
 _T = TypeVar("_T", bound=BaseModel)
+
+
+def read_image(path: Path) -> tuple[bytes, str]:
+    """Return verified image bytes and media type, rejecting unsafe files."""
+    if path.stat().st_size > _MAX_IMAGE_BYTES:
+        raise ValueError(f"Screenshot exceeds 12 MiB: {path}")
+    raw = path.read_bytes()
+    try:
+        with py_warnings.catch_warnings():
+            py_warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(raw)) as image:
+                media_type = _IMAGE_TYPES.get(image.format or "")
+                if media_type is None:
+                    raise ValueError(f"Unsupported screenshot image format: {path}")
+                if image.width * image.height > _MAX_IMAGE_PIXELS:
+                    raise ValueError(f"Screenshot exceeds 25 million pixels: {path}")
+                image.verify()
+            with Image.open(BytesIO(raw)) as decoded:
+                decoded.load()
+    except (
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as exc:
+        raise ValueError(f"Invalid screenshot image {path}: {exc}") from exc
+    return raw, media_type
 
 
 def safe_path(root: Path, relative: str) -> Path:
@@ -186,6 +224,7 @@ def prepare_run(workspace: Path) -> Path:
 def load_run(run_dir: Path) -> RunBundle:
     manifest_path = safe_path(run_dir, "manifest.json")
     manifest = _read_json(manifest_path, RunManifest)
+    preflight = _load_preflight(run_dir, manifest)
 
     results: dict[tuple[str, str], JourneyResult] = {}
     scores: dict[tuple[str, str], Score] = {}
@@ -194,6 +233,7 @@ def load_run(run_dir: Path) -> RunBundle:
     for persona in manifest.project.personas:
         for journey in persona.journeys:
             key = (persona.id, journey.id)
+            label = f"{persona.id}/{journey.id}"
             known_keys.add(key)
             relative = f"journeys/{persona.id}/{journey.id}"
             journey_dir = safe_path(run_dir, relative)
@@ -202,59 +242,159 @@ def load_run(run_dir: Path) -> RunBundle:
             if not result_path.is_file():
                 if score_path.exists():
                     raise ValueError(f"score file has no journey result: {score_path}")
-                warnings.append(f"Missing result for {persona.id}/{journey.id}.")
+                warnings.append(f"Missing result for {label}.")
                 continue
+            if preflight is not None and preflight.status == "blocked":
+                raise ValueError(
+                    f"journey result exists although preflight is blocked: {label}"
+                )
             result = _read_json(result_path, JourneyResult)
             if (result.persona_id, result.journey_id) != key:
                 raise ValueError(
                     f"result identifiers do not match manifest path {relative}"
                 )
+            if result.ux is None:
+                warnings.append(
+                    f"UX assessment not recorded for {label} "
+                    f"(schema version {result.schema_version} result)."
+                )
+            elif [c.criterion for c in result.ux.success_criteria] != list(
+                journey.success_criteria
+            ):
+                raise ValueError(
+                    f"ux success criteria must match the manifest journey {label}"
+                )
             _validate_screenshot_paths(run_dir, journey_dir, result, warnings)
             results[key] = result
-            if not score_path.is_file():
-                if result.status == "completed":
-                    warnings.append(
-                        f"Missing score for completed journey {persona.id}/{journey.id}."
-                    )
-                continue
-            score = _read_json(score_path, Score)
-            if (score.persona_id, score.journey_id) != key:
-                raise ValueError(
-                    f"score identifiers do not match manifest path {relative}"
-                )
-            if score.score is not None:
-                if result.status not in {"completed", "application_blocked"}:
-                    raise ValueError(
-                        f"numeric score is not allowed for {result.status} journey {persona.id}/{journey.id}"
-                    )
-                available_evidence = (
-                    {action.id for action in result.actions}
-                    | {screenshot.id for screenshot in result.screenshots}
-                    | {finding.id for finding in result.findings}
-                )
-                if not score.evidence or not (set(score.evidence) & available_evidence):
-                    raise ValueError(
-                        f"numeric score requires actual evidence for {persona.id}/{journey.id}"
-                    )
-            available_evidence = (
-                {action.id for action in result.actions}
-                | {screenshot.id for screenshot in result.screenshots}
-                | {finding.id for finding in result.findings}
+            score = (
+                _load_score(score_path, result, key) if score_path.is_file() else None
             )
-            unknown = set(score.evidence) - available_evidence
-            if unknown:
-                raise ValueError(
-                    f"unknown score evidence references for {persona.id}/{journey.id}: {sorted(unknown)}"
-                )
-            scores[key] = score
+            if score is not None:
+                scores[key] = score
+            if result.status in SCORE_ELIGIBLE and (
+                score is None or score.score is None
+            ):
+                warnings.append(f"No numeric score for score-eligible journey {label}.")
 
     _reject_unexpected_results(run_dir, known_keys)
+    if results and preflight is None:
+        warnings.append("No preflight record; capability evidence is unavailable.")
+    report_content = _load_report_content(run_dir, manifest, results, warnings)
     return RunBundle(
         manifest=manifest,
+        preflight=preflight,
         results=results,
         scores=scores,
         warnings=warnings,
+        report_content=report_content,
     )
+
+
+def _load_report_content(
+    run_dir: Path,
+    manifest: RunManifest,
+    results: dict[tuple[str, str], JourneyResult],
+    warnings: list[str],
+) -> ReportContent | None:
+    path = safe_path(run_dir, REPORT_CONTENT_FILE)
+    if not path.exists():
+        return None
+    content = _read_json(path, ReportContent)
+    if content.run_id != manifest.run_id:
+        raise ValueError("report content run_id does not match the manifest")
+
+    recorded = {
+        (persona_id, journey_id, finding.id): finding
+        for (persona_id, journey_id), result in results.items()
+        for finding in result.findings
+    }
+    represented: set[tuple[str, str, str]] = set()
+    extra_images = safe_path(run_dir, "report-evidence").resolve()
+    for item in content.findings:
+        allowed_images: set[Path] = set()
+        for source in item.sources:
+            key = (source.persona_id, source.journey_id, source.finding_id)
+            finding = recorded.get(key)
+            if finding is None:
+                raise ValueError(f"unknown report finding source: {'/'.join(key)}")
+            represented.add(key)
+            result = results[(source.persona_id, source.journey_id)]
+            journey_dir = safe_path(
+                run_dir, f"journeys/{source.persona_id}/{source.journey_id}"
+            )
+            allowed_images.update(
+                safe_path(journey_dir, screenshot.file).resolve()
+                for screenshot in result.screenshots
+                if screenshot.id in finding.evidence
+                or (
+                    screenshot.action_id is not None
+                    and screenshot.action_id in finding.evidence
+                )
+            )
+        for screenshot in item.screenshots:
+            image = safe_path(run_dir, screenshot.file)
+            supplemental = image.resolve().is_relative_to(extra_images)
+            if image.resolve() not in allowed_images and not (
+                supplemental and screenshot.captured_at is not None
+            ):
+                raise ValueError(
+                    "report screenshot must support a referenced finding or be "
+                    f"a dated image in report-evidence/: {screenshot.file}"
+                )
+            if image.exists() and not image.is_file():
+                raise ValueError(f"Screenshot must be a regular file: {image}")
+            if not image.is_file():
+                warnings.append(f"Missing report screenshot {screenshot.file}.")
+            else:
+                read_image(image)
+
+    missing = recorded.keys() - represented
+    if missing:
+        omitted = ", ".join("/".join(key) for key in sorted(missing))
+        raise ValueError(f"report content omits recorded findings: {omitted}")
+    return content
+
+
+def _load_preflight(run_dir: Path, manifest: RunManifest) -> Preflight | None:
+    path = safe_path(run_dir, PREFLIGHT_FILE)
+    if not path.exists():
+        return None
+    preflight = _read_json(path, Preflight)
+    if preflight.run_id != manifest.run_id:
+        raise ValueError("preflight run_id does not match the manifest")
+    if preflight.probe_screenshot is not None:
+        probe = safe_path(run_dir, preflight.probe_screenshot)
+        if not probe.is_file():
+            raise ValueError(
+                f"preflight probe screenshot is missing: {preflight.probe_screenshot}"
+            )
+        read_image(probe)
+    return preflight
+
+
+def _load_score(score_path: Path, result: JourneyResult, key: tuple[str, str]) -> Score:
+    label = f"{key[0]}/{key[1]}"
+    score = _read_json(score_path, Score)
+    if (score.persona_id, score.journey_id) != key:
+        raise ValueError(f"score identifiers do not match manifest path {label}")
+    available_evidence = (
+        {action.id for action in result.actions}
+        | {screenshot.id for screenshot in result.screenshots}
+        | {finding.id for finding in result.findings}
+    )
+    if score.score is not None:
+        if result.status not in SCORE_ELIGIBLE:
+            raise ValueError(
+                f"numeric score is not allowed for {result.status} journey {label}"
+            )
+        if not set(score.evidence) & available_evidence:
+            raise ValueError(f"numeric score requires actual evidence for {label}")
+    unknown = set(score.evidence) - available_evidence
+    if unknown:
+        raise ValueError(
+            f"unknown score evidence references for {label}: {sorted(unknown)}"
+        )
+    return score
 
 
 def _read_json(path: Path, model: type[_T]) -> _T:

@@ -17,7 +17,7 @@ AGENTS = {
     "uat-scoring": ASSETS / ".github" / "agents" / "uat-scoring.agent.md",
 }
 CONTRACT = ASSETS / ".github" / "skills" / "references" / "uat-contract.md"
-COMMANDS = {"install", "init", "validate", "run", "report", "schema"}
+COMMANDS = {"install", "init", "validate", "run", "check", "report", "schema"}
 CLI_PREFIX = (
     r"(?:uv\s+run\s+(?:--project\s+\S+\s+)?"
     r"|uv\s+tool\s+run\s+--from\s+\S+\s+)?"
@@ -99,12 +99,13 @@ def test_documented_cli_examples_use_supported_commands() -> None:
 
 def test_target_skills_resolve_cli_without_requiring_target_uv_project() -> None:
     for path in SKILLS.values():
-        text = path.read_text(encoding="utf-8")
-        assert "`agentic-uat --help`" in text
-        normalized = " ".join(text.lower().split())
-        assert "do not run `uv run agentic-uat` from the target workspace" in normalized
+        assert "../references/uat-contract.md#cli" in path.read_text(encoding="utf-8")
 
     contract = CONTRACT.read_text(encoding="utf-8")
+    assert "## CLI" in contract
+    assert "`agentic-uat --help`" in contract
+    normalized = " ".join(contract.lower().split())
+    assert "do not run `uv run agentic-uat` from the target workspace" in normalized
     assert "uv tool install /path/to/agentic-uat" in contract
     assert "uv tool run --from /path/to/agentic-uat agentic-uat" in contract
     assert "uv run --project /path/to/agentic-uat agentic-uat" in contract
@@ -117,6 +118,17 @@ def test_init_skill_uses_both_durable_memory_files() -> None:
     assert ".agentic-uat/context.yaml" not in text
 
 
+def test_init_checks_reachability_before_asking_network_questions() -> None:
+    init = " ".join(SKILLS["uat-init"].read_text(encoding="utf-8").split())
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert "../references/uat-contract.md#access" in init
+    assert init.index("Check access") < init.index("Ask about")
+    assert "If the app or its sign-in page loads" in contract
+    assert "do not ask about VPN or proxy" in contract
+    assert "Ask about VPN/proxy only after an observed connectivity failure" in contract
+    assert "do not perform browser actions during intake" not in init.lower()
+
+
 def test_scoring_agent_and_contract_exclude_incomplete_numeric_scores() -> None:
     for path in (AGENTS["uat-scoring"], CONTRACT):
         text = " ".join(path.read_text(encoding="utf-8").split())
@@ -127,3 +139,84 @@ def test_scoring_agent_and_contract_exclude_incomplete_numeric_scores() -> None:
         assert ("`incomplete` journeys must never receive numeric scores.") in text, (
             path
         )
+
+
+def test_coordinator_hands_cli_to_subagents_and_never_writes_their_artifacts() -> None:
+    run = " ".join(SKILLS["uat-run"].read_text(encoding="utf-8").split())
+    assert run.count("resolved CLI command") == 2
+    coordinator = " ".join(
+        AGENTS["uat-coordinator"].read_text(encoding="utf-8").split()
+    )
+    assert "never create or edit them yourself" in coordinator
+
+
+def test_uat_uses_subagents_without_creating_copilot_sessions() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert "## Orchestration" in contract
+    assert "current Copilot chat" in contract
+    assert "Do not create extra Copilot sessions or chats" in contract
+    assert "`create_session`" in contract
+    for path in (SKILLS["uat-run"], AGENTS["uat-coordinator"]):
+        assert "#orchestration" in path.read_text(encoding="utf-8")
+
+
+def test_browser_visibility_is_required_for_journey_handoffs() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert "## Browser visibility" in contract
+    assert "await page.bringToFront();" in contract
+    assert "Keep the active journey tab visible" in contract
+    assert "Do not close or hide" in contract
+    assert "report the tool limitation" in contract
+    for path in (SKILLS["uat-run"], AGENTS["uat-journey"]):
+        assert "#browser-visibility" in path.read_text(encoding="utf-8")
+
+
+def test_viewport_guidance_is_passed_to_journeys() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert "ask the owner to enlarge the integrated browser pane" in contract
+    assert "do not infer visible coverage from reported dimensions alone" in contract
+    assert "do not generalize to device sizes that were not tested" in contract
+    for path in (SKILLS["uat-run"], AGENTS["uat-journey"]):
+        assert "#viewport-and-display-size" in path.read_text(encoding="utf-8")
+    assert "measured viewport sizes" in " ".join(
+        SKILLS["uat-run"].read_text(encoding="utf-8").split()
+    )
+
+
+def test_business_terminology_is_clarified_and_passed_to_journeys() -> None:
+    init = " ".join(SKILLS["uat-init"].read_text(encoding="utf-8").split())
+    run = " ".join(SKILLS["uat-run"].read_text(encoding="utf-8").split())
+    journey = " ".join(AGENTS["uat-journey"].read_text(encoding="utf-8").split())
+    assert "confirm unresolved meanings rather than guessing" in init
+    assert "domain-term meanings and examples" in run
+    assert "ask the coordinator to clarify it with the owner; do not guess" in journey
+
+
+def test_journeys_act_capture_and_time_in_one_browser_call() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    journey = AGENTS["uat-journey"].read_text(encoding="utf-8")
+    assert "new Date().toISOString()" in contract
+    assert "Never run `date` in a shell, query the session store" in contract
+    assert "Do not use `fullPage: true`" in contract
+    assert "fullPage: true });" not in contract
+    assert "Do not check each file separately" in contract
+    for anchor in ("#act-capture-and-time-in-one-call", "#browser-efficiency"):
+        assert anchor in journey
+
+
+def test_scoring_uses_recorded_text_when_screenshots_are_cropped() -> None:
+    for path in (AGENTS["uat-scoring"], CONTRACT):
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert "action outcomes" in text, path
+        assert "cropped" in text, path
+
+
+def test_init_explores_then_asks_persona_and_tickbox_action_policy() -> None:
+    init = " ".join(SKILLS["uat-init"].read_text(encoding="utf-8").split())
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert init.index("Explore before asking") < init.index("ask about the persona")
+    assert "Default to read-only" not in init
+    assert "../references/uat-contract.md#action-policy" in init
+    assert "multi-select form" in contract
+    assert "`All actions in the app`" in contract
+    assert "Do not default to read-only when the app writes" in contract

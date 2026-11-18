@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from agentic_uat.cli import app
-from agentic_uat.models import JourneyResult, Project, Score
+from agentic_uat.models import JourneyResult, Preflight, Project, Score
 from agentic_uat.storage import (
     init_project,
     install_assets,
@@ -63,6 +63,47 @@ def project_data() -> dict[str, object]:
     }
 
 
+BLOCKER_KINDS = {
+    "application_blocked": "application",
+    "setup_blocked": "setup",
+    "policy_blocked": "policy",
+}
+
+
+def ux_data(
+    *, status: str = "completed", evidence: list[str] | None = None
+) -> dict[str, object]:
+    refs = ["open-records"] if evidence is None else evidence
+    assessed = status in {"completed", "application_blocked"} and bool(refs)
+    rating = {
+        "level": "minor_friction" if assessed else "not_assessed",
+        "notes": "One label was ambiguous." if assessed else "Journey did not run.",
+        "evidence": refs if assessed else [],
+    }
+    blockers = (
+        [{"kind": BLOCKER_KINDS[status], "description": "Blocked.", "evidence": []}]
+        if status in BLOCKER_KINDS
+        else []
+    )
+    return {
+        "ease_of_use": dict(rating),
+        "intuitiveness": dict(rating),
+        "performance": {
+            "status": "unavailable",
+            "notes": "No navigation timing was exposed by the browser tools.",
+            "evidence": [],
+        },
+        "success_criteria": [
+            {
+                "criterion": "The record is displayed.",
+                "outcome": "met" if status == "completed" else "not_assessed",
+                "evidence": refs if status == "completed" else [],
+            }
+        ],
+        "blockers": blockers,
+    }
+
+
 def result_data(
     *,
     status: str = "completed",
@@ -85,7 +126,7 @@ def result_data(
         else []
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "persona_id": persona_id,
         "journey_id": journey_id,
         "status": status,
@@ -97,7 +138,15 @@ def result_data(
         "findings": [],
         "screenshots": [],
         "limitations": [],
+        "ux": ux_data(status=status, evidence=None if with_action else []),
     }
+
+
+def legacy_result_data() -> dict[str, object]:
+    data = result_data()
+    data["schema_version"] = 1
+    del data["ux"]
+    return data
 
 
 def write_run(
@@ -105,6 +154,7 @@ def write_run(
     *,
     result: dict[str, object] | None = None,
     score: dict[str, object] | None = None,
+    preflight: dict[str, object] | None = None,
 ) -> Path:
     run_id = "run-2026-11-18t120000z"
     run_dir = root / ".agentic-uat" / "runs" / run_id
@@ -121,6 +171,8 @@ def write_run(
         (journey_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
     if score is not None:
         (journey_dir / "score.json").write_text(json.dumps(score), encoding="utf-8")
+    if preflight is not None:
+        (run_dir / "preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
     return run_dir
 
 
@@ -262,7 +314,7 @@ def test_timing_values_reject_coercion(bad: object) -> None:
 
 
 def test_timing_values_allow_fractional_milliseconds() -> None:
-    result = result_data()
+    result = legacy_result_data()
     actions = result["actions"]
     assert isinstance(actions, list)
     actions[0]["application_ms"] = 1.25
@@ -289,12 +341,31 @@ def test_scores_are_not_allowed_for_setup_or_policy_blockers(tmp_path: Path) -> 
     assert bundle.scores[("member", "find-record")].score == 2
 
 
-def test_completed_without_score_is_a_warning_not_a_synthetic_score(
-    tmp_path: Path,
+@pytest.mark.parametrize("status", ["completed", "application_blocked"])
+@pytest.mark.parametrize("with_score_file", [False, True])
+def test_score_eligible_journey_without_numeric_score_warns(
+    tmp_path: Path, status: str, with_score_file: bool
 ) -> None:
-    bundle = load_run(write_run(tmp_path, result=result_data()))
-    assert bundle.scores == {}
-    assert any("score" in warning.lower() for warning in bundle.warnings)
+    score = score_data(score=None, evidence=[]) if with_score_file else None
+    bundle = load_run(
+        write_run(tmp_path, result=result_data(status=status), score=score)
+    )
+    assert ("member", "find-record") not in bundle.scores or (
+        bundle.scores[("member", "find-record")].score is None
+    )
+    score_warnings = [w for w in bundle.warnings if "score" in w]
+    assert score_warnings == [
+        "No numeric score for score-eligible journey member/find-record."
+    ]
+
+
+def test_ineligible_journey_without_score_does_not_warn(tmp_path: Path) -> None:
+    bundle = load_run(
+        write_run(
+            tmp_path, result=result_data(status="setup_blocked", with_action=False)
+        )
+    )
+    assert not any("score" in warning for warning in bundle.warnings)
 
 
 def test_load_run_rejects_manifest_symlink_outside_run_root(tmp_path: Path) -> None:
@@ -393,6 +464,12 @@ def test_schema_command_emits_model_schemas() -> None:
     schema = json.loads(result.stdout)
     assert schema["properties"]["access"]["$ref"]
     assert schema["additionalProperties"] is False
+    preflight = runner.invoke(app, ["schema", "preflight"])
+    assert preflight.exit_code == 0
+    assert "checks" in json.loads(preflight.stdout)["properties"]
+    report = runner.invoke(app, ["schema", "report"])
+    assert report.exit_code == 0
+    assert "findings" in json.loads(report.stdout)["properties"]
 
 
 def test_cli_help_is_available() -> None:
@@ -408,3 +485,196 @@ def test_run_command_says_browser_uat_was_not_executed(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", "--workspace", str(tmp_path)])
     assert result.exit_code == 0
     assert "browser uat has not been executed" in result.stdout.lower()
+
+
+def test_current_results_require_ux_assessment() -> None:
+    missing = result_data()
+    del missing["ux"]
+    with pytest.raises(ValidationError, match="ux"):
+        JourneyResult.model_validate(missing)
+    assert JourneyResult.model_validate(legacy_result_data()).ux is None
+
+
+def test_ux_ratings_need_known_evidence_unless_not_assessed() -> None:
+    unsupported = result_data()
+    ux = unsupported["ux"]
+    assert isinstance(ux, dict)
+    ux["ease_of_use"]["evidence"] = []
+    with pytest.raises(ValidationError, match="evidence"):
+        JourneyResult.model_validate(unsupported)
+
+    unknown = result_data()
+    ux = unknown["ux"]
+    assert isinstance(ux, dict)
+    ux["intuitiveness"]["evidence"] = ["not-recorded"]
+    with pytest.raises(ValidationError, match="not-recorded"):
+        JourneyResult.model_validate(unknown)
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome", "blocker_kind"),
+    [
+        ("completed", "not_met", None),
+        ("completed", "met", "application"),
+        ("application_blocked", "not_met", None),
+        ("setup_blocked", "not_assessed", "application"),
+        ("policy_blocked", "not_assessed", "setup"),
+    ],
+)
+def test_status_must_agree_with_criteria_and_blockers(
+    status: str, outcome: str, blocker_kind: str | None
+) -> None:
+    data = result_data(status=status)
+    ux = data["ux"]
+    assert isinstance(ux, dict)
+    ux["success_criteria"][0]["outcome"] = outcome
+    ux["success_criteria"][0]["evidence"] = ["open-records"]
+    ux["blockers"] = (
+        []
+        if blocker_kind is None
+        else [{"kind": blocker_kind, "description": "Blocked.", "evidence": []}]
+    )
+    with pytest.raises(ValidationError, match="status"):
+        JourneyResult.model_validate(data)
+
+
+def test_performance_status_matches_recorded_timings() -> None:
+    claimed = result_data()
+    ux = claimed["ux"]
+    assert isinstance(ux, dict)
+    ux["performance"] = {
+        "status": "measured",
+        "notes": "Navigation timing.",
+        "evidence": ["open-records"],
+    }
+    with pytest.raises(ValidationError, match="application_ms"):
+        JourneyResult.model_validate(claimed)
+
+    hidden = result_data()
+    actions = hidden["actions"]
+    assert isinstance(actions, list)
+    actions[0]["application_ms"] = 412.5
+    with pytest.raises(ValidationError, match="measured"):
+        JourneyResult.model_validate(hidden)
+
+    actions_claimed = claimed["actions"]
+    assert isinstance(actions_claimed, list)
+    actions_claimed[0]["application_ms"] = 412.5
+    validated = JourneyResult.model_validate(claimed)
+    assert validated.ux is not None
+    assert validated.ux.performance.status == "measured"
+
+
+def test_success_criteria_must_match_manifest_journey(tmp_path: Path) -> None:
+    data = result_data()
+    ux = data["ux"]
+    assert isinstance(ux, dict)
+    ux["success_criteria"][0]["criterion"] = "Something easier."
+    with pytest.raises(ValueError, match="success criteria"):
+        load_run(write_run(tmp_path, result=data))
+
+
+def test_legacy_result_loads_with_visible_missing_ux_warning(tmp_path: Path) -> None:
+    bundle = load_run(
+        write_run(tmp_path, result=legacy_result_data(), score=score_data())
+    )
+    assert bundle.results[("member", "find-record")].ux is None
+    assert (
+        "UX assessment not recorded for member/find-record "
+        "(schema version 1 result)." in bundle.warnings
+    )
+
+
+CAPABILITIES = [
+    "open_page",
+    "read_page",
+    "interact",
+    "capture_screenshot",
+    "persist_screenshot",
+    "delegate_subagent",
+]
+
+
+def preflight_data(
+    *, missing: tuple[str, ...] = (), probe: str | None = "preflight/probe.png"
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "run_id": "run-2026-11-18t120000z",
+        "checked_at": NOW.isoformat(),
+        "status": "blocked" if missing else "ready",
+        "checks": [
+            {
+                "capability": name,
+                "available": name not in missing,
+                "evidence": "Tool not in session inventory."
+                if name in missing
+                else f"Tool for {name} listed.",
+            }
+            for name in CAPABILITIES
+        ],
+        "probe_screenshot": probe,
+    }
+
+
+def test_preflight_status_must_follow_capability_checks() -> None:
+    inconsistent = preflight_data(missing=("open_page",))
+    inconsistent["status"] = "ready"
+    with pytest.raises(ValidationError, match="status"):
+        Preflight.model_validate(inconsistent)
+
+    partial = preflight_data()
+    checks = partial["checks"]
+    assert isinstance(checks, list)
+    checks.pop()
+    with pytest.raises(ValidationError, match="delegate_subagent"):
+        Preflight.model_validate(partial)
+
+    with pytest.raises(ValidationError, match="probe"):
+        Preflight.model_validate(preflight_data(probe=None))
+
+
+def test_blocked_preflight_rejects_dispatched_journeys(tmp_path: Path) -> None:
+    run_dir = write_run(
+        tmp_path,
+        result=result_data(status="setup_blocked", with_action=False),
+        preflight=preflight_data(missing=("open_page",), probe=None),
+    )
+    with pytest.raises(ValueError, match="preflight"):
+        load_run(run_dir)
+
+
+def test_check_command_gates_journey_dispatch_on_ready_preflight(
+    tmp_path: Path,
+) -> None:
+    missing = write_run(tmp_path / "missing")
+    result = runner.invoke(app, ["check", str(missing), "--require-preflight"])
+    assert result.exit_code == 1
+    assert "preflight" in result.output.lower()
+
+    blocked = write_run(
+        tmp_path / "blocked",
+        preflight=preflight_data(missing=("open_page",), probe=None),
+    )
+    result = runner.invoke(app, ["check", str(blocked), "--require-preflight"])
+    assert result.exit_code == 1
+    assert "open_page" in result.output
+
+    ready = write_run(tmp_path / "ready", preflight=preflight_data())
+    result = runner.invoke(app, ["check", str(ready), "--require-preflight"])
+    assert result.exit_code == 1
+    assert "probe" in result.output.lower()
+
+    probe = ready / "preflight" / "probe.png"
+    probe.parent.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (4, 4), "white").save(probe)
+    result = runner.invoke(app, ["check", str(ready), "--require-preflight"])
+    assert result.exit_code == 0, result.output
+    assert "ready" in result.output.lower()
+
+
+def test_results_without_preflight_record_warn(tmp_path: Path) -> None:
+    bundle = load_run(write_run(tmp_path, result=result_data(), score=score_data()))
+    assert "No preflight record; capability evidence is unavailable." in bundle.warnings
