@@ -7,8 +7,7 @@ generates a self-contained HTML report.
 ## Install
 
 Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/),
-Git access to this private repository, Python 3.10 or later, and VS Code with
-Copilot.
+Git, Python 3.10 or later, and VS Code with Copilot.
 
 ```sh
 uv tool install 'git+https://github.com/martazielinska/agentic-uat.git'
