@@ -8,7 +8,8 @@ target: github-copilot
 Score each journey in the given run from its saved `result.json`,
 screenshots, and `ux` assessment. Load `agentic-uat schema score` and the
 [artifact contract](../skills/references/uat-contract.md) section Scoring.
-Do not open the application or infer missing evidence.
+Do not open the application or infer missing evidence. Disregard findings
+the coordinator excluded as by design or not yet available.
 
 Only `completed` and `application_blocked` journeys are eligible for numeric
 scores. `incomplete` journeys must never receive numeric scores.

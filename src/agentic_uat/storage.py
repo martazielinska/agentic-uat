@@ -25,7 +25,28 @@ from .models import (
 ASSETS_DIR = Path(__file__).parent / "assets"
 MEMORY_DIR = ".agentic-uat"
 PROJECT_FILE = "project.yaml"
+BUSINESS_CONTEXT_DIR = "business-context"
+BUSINESS_CONTEXT_GUIDE = """\
+# Business context for UAT
+
+Add non-secret files here before running `/uat-init`. Copilot reads every
+file in this folder and asks about anything it still cannot know. Any
+format Copilot can read works, such as Markdown, text, Word, or PDF.
+
+Useful content:
+
+- What the application is for, who uses it, and the business process.
+- Domain terms, abbreviations, and codes, with meanings and examples.
+- Targets, thresholds, and rules users apply to judge success.
+- Feature availability: which features are available, in development,
+  planned, or out of scope.
+- Deliberate design decisions that may look like defects.
+- Test data, scopes, or records to use or avoid.
+
+Do not add passwords, tokens, or other secrets.
+"""
 RUNS_DIR = "runs"
+OUTPUTS_DIR = "outputs"
 PREFLIGHT_FILE = "preflight.json"
 REPORT_CONTENT_FILE = "report-content.json"
 SCORE_ELIGIBLE = {"completed", "application_blocked"}
@@ -94,7 +115,17 @@ def load_project(workspace: Path) -> Project:
         raise
     except yaml.YAMLError as exc:
         raise ValueError(f"invalid project YAML in {project_path}: {exc}") from exc
-    return Project.model_validate(data)
+    project = Project.model_validate(data)
+    if project.schema_version < 2:
+        raise ValueError(
+            "project memory uses schema version 1 without business context; "
+            "rerun /uat-init to review context sources and record clarifications"
+        )
+    for source in project.context_sources:
+        path = Path(source).expanduser()
+        if not (path if path.is_absolute() else workspace / path).exists():
+            raise ValueError(f"context source does not exist: {source}")
+    return project
 
 
 def init_project(workspace: Path) -> Path:
@@ -103,7 +134,7 @@ def init_project(workspace: Path) -> Path:
     memory_dir.mkdir(parents=True, exist_ok=True)
     project_path = memory_dir / PROJECT_FILE
     draft: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "name": None,
         "base_url": None,
         "access": {
@@ -117,6 +148,10 @@ def init_project(workspace: Path) -> Path:
         },
         "personas": [],
         "approved_actions": [],
+        "context_sources": [f"{MEMORY_DIR}/{BUSINESS_CONTEXT_DIR}"],
+        "feature_status": [],
+        "design_decisions": [],
+        "clarifications": None,
     }
     try:
         descriptor = os.open(project_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -142,6 +177,12 @@ def init_project(workspace: Path) -> Path:
                 "Record non-secret interview context here. "
                 "Keep structured intake answers in project.yaml.\n"
             )
+    context_dir = memory_dir / BUSINESS_CONTEXT_DIR
+    _reject_symlink_components(workspace, context_dir)
+    context_dir.mkdir(exist_ok=True)
+    guide = context_dir / "README.md"
+    if not any(context_dir.iterdir()):
+        guide.write_text(BUSINESS_CONTEXT_GUIDE, encoding="utf-8")
     return project_path
 
 
@@ -218,6 +259,10 @@ def prepare_run(workspace: Path) -> Path:
     (run_dir / "manifest.json").write_text(
         manifest.model_dump_json(indent=2), encoding="utf-8"
     )
+    for persona in project.personas:
+        for journey in persona.journeys:
+            journey_dir = run_dir / "journeys" / persona.id / journey.id
+            (journey_dir / OUTPUTS_DIR).mkdir(parents=True)
     return run_dir
 
 
@@ -349,6 +394,32 @@ def _load_report_content(
                 read_image(image)
 
     missing = recorded.keys() - represented
+    basis_ids = (
+        manifest.project.exclusion_basis_ids()
+        | {decision.id for decision in content.additional_decisions}
+        | {
+            feature.id
+            for feature in content.additional_feature_status
+            if feature.status != "available"
+        }
+    )
+    excluded: set[tuple[str, str, str]] = set()
+    for exclusion in content.excluded:
+        key = (exclusion.persona_id, exclusion.journey_id, exclusion.finding_id)
+        label = "/".join(key)
+        if key not in recorded:
+            raise ValueError(f"unknown excluded finding: {label}")
+        if key in represented:
+            raise ValueError(f"finding is both reported and excluded: {label}")
+        if key in excluded:
+            raise ValueError(f"finding is excluded more than once: {label}")
+        if exclusion.basis not in basis_ids:
+            raise ValueError(
+                f"excluded finding {label} cites {exclusion.basis!r}, which is not "
+                "a design decision or unavailable feature"
+            )
+        excluded.add(key)
+    missing -= excluded
     if missing:
         omitted = ", ".join("/".join(key) for key in sorted(missing))
         raise ValueError(f"report content omits recorded findings: {omitted}")

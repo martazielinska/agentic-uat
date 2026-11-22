@@ -308,6 +308,49 @@ def test_edited_report_rejects_untraceable_or_omitted_findings(
     assert checked.exit_code != 0
 
 
+def test_report_excludes_findings_only_for_confirmed_decisions(
+    tmp_path: Path,
+) -> None:
+    run = make_run(tmp_path)
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["project"]["feature_status"] = [
+        {
+            "id": "reports",
+            "feature": "Reports",
+            "status": "available",
+            "source": "owner",
+        }
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    content = report_content()
+    source = content["findings"].pop()["sources"][0]
+    content["excluded"] = [{**source, "basis": "reports", "reason": "By design."}]
+    (run / "report-content.json").write_text(json.dumps(content), encoding="utf-8")
+    with pytest.raises(ValueError, match="not a design decision or unavailable"):
+        render_report(run)
+
+    content["additional_decisions"] = [
+        {"id": "label-wording", "decision": "Labels mirror data.", "source": "owner"}
+    ]
+    content["excluded"][0]["basis"] = "label-wording"
+    (run / "report-content.json").write_text(json.dumps(content), encoding="utf-8")
+    html = render_report(run).read_text(encoding="utf-8")
+    assert "The label matches the report." not in html
+
+    content["additional_feature_status"] = [
+        {
+            "id": "exports",
+            "feature": "Exports",
+            "status": "in_development",
+            "source": "owner",
+        }
+    ]
+    content["excluded"][0]["basis"] = "exports"
+    (run / "report-content.json").write_text(json.dumps(content), encoding="utf-8")
+    render_report(run)
+
+
 def test_edited_report_rejects_unrelated_or_unsafe_screenshot(tmp_path: Path) -> None:
     run = make_run(tmp_path)
     journey = run / "journeys/analyst/find-report"

@@ -176,10 +176,15 @@ def write_run(
     return run_dir
 
 
-def write_project(workspace: Path) -> Path:
+def project_v2_data(**changes: object) -> dict[str, object]:
+    return {**project_data(), "schema_version": 2, "clarifications": [], **changes}
+
+
+def write_project(workspace: Path, data: dict[str, object] | None = None) -> Path:
     project_file = workspace / ".agentic-uat" / "project.yaml"
     project_file.parent.mkdir(parents=True, exist_ok=True)
-    project_file.write_text(yaml.safe_dump(project_data()), encoding="utf-8")
+    payload = project_v2_data() if data is None else data
+    project_file.write_text(yaml.safe_dump(payload), encoding="utf-8")
     return project_file
 
 
@@ -403,6 +408,58 @@ def test_run_directories_are_unique(tmp_path: Path) -> None:
     assert first.is_dir() and second.is_dir()
     assert (first / "manifest.json").is_file()
     assert (second / "manifest.json").is_file()
+    assert (first / "journeys" / "member" / "find-record" / "outputs").is_dir()
+
+
+def test_init_drafts_business_context_intake(tmp_path: Path) -> None:
+    draft = init_project(tmp_path)
+    content = yaml.safe_load(draft.read_text(encoding="utf-8"))
+    assert content["schema_version"] == 2
+    assert content["context_sources"] == [".agentic-uat/business-context"]
+    assert content["clarifications"] is None
+    guide = tmp_path / ".agentic-uat" / "business-context" / "README.md"
+    assert "Feature availability" in guide.read_text(encoding="utf-8")
+
+
+def test_project_runs_only_with_answered_business_context(tmp_path: Path) -> None:
+    write_project(tmp_path, project_data())
+    with pytest.raises(ValueError, match="rerun /uat-init"):
+        load_project(tmp_path)
+
+    implicit = project_v2_data()
+    del implicit["clarifications"]
+    with pytest.raises(ValidationError, match="clarifications are required"):
+        Project.model_validate(implicit)
+
+    question = {"id": "ls-channel", "question": "What is Ls?"}
+    write_project(
+        tmp_path,
+        project_v2_data(clarifications=[{**question, "answer": None, "source": None}]),
+    )
+    result = runner.invoke(app, ["run", "--workspace", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "unanswered business-context clarifications: ls-channel" in result.output
+
+    answered = {**question, "answer": "Large supermarkets.", "source": "owner"}
+    write_project(
+        tmp_path,
+        project_v2_data(clarifications=[answered], context_sources=["docs"]),
+    )
+    with pytest.raises(ValueError, match="context source does not exist: docs"):
+        load_project(tmp_path)
+    (tmp_path / "docs").mkdir()
+    assert load_project(tmp_path).clarifications[0].answer == "Large supermarkets."
+
+
+def test_codebase_facts_require_a_reference() -> None:
+    decision = {"id": "sales-only", "decision": "Lists use sales data only."}
+    with pytest.raises(ValidationError, match="codebase facts require a reference"):
+        Project.model_validate(
+            project_v2_data(design_decisions=[{**decision, "source": "codebase"}])
+        )
+    Project.model_validate(
+        project_v2_data(design_decisions=[{**decision, "source": "owner"}])
+    )
 
 
 def test_install_preflights_conflicts_and_never_overwrites_agents(

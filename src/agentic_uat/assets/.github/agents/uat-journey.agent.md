@@ -12,6 +12,8 @@ the manifest or earlier results unless the brief lacks something you need.
 Read the [artifact contract](../skills/references/uat-contract.md) sections
 [Browser visibility](../skills/references/uat-contract.md#browser-visibility),
 [Viewport and display size](../skills/references/uat-contract.md#viewport-and-display-size),
+[Browser tool constraints](../skills/references/uat-contract.md#browser-tool-constraints),
+[Downloads](../skills/references/uat-contract.md#downloads),
 [Act, capture, and time in one call](../skills/references/uat-contract.md#act-capture-and-time-in-one-call),
 [Browser efficiency](../skills/references/uat-contract.md#browser-efficiency),
 [Stakeholder report](../skills/references/uat-contract.md#stakeholder-report),
@@ -27,7 +29,10 @@ setup or access blocker.
 Use the brief's business terminology when judging the persona's task. If a
 term needed for a decision remains unclear, ask the coordinator to clarify
 it with the owner; do not guess. Mark affected criteria `not_assessed` if it
-cannot be resolved.
+cannot be resolved. Do not record features the brief lists as not available,
+or behavior it lists as a design decision, as defects. If you cannot tell
+whether something is deliberate, record the observation and name the
+question in your handoff. Do not read the application's source code.
 
 Work as the persona would, through the visible UI. Keep moving; each tool
 call should advance the task.

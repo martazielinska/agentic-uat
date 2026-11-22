@@ -17,6 +17,11 @@ missing tool. If a browser, screenshot-persistence, or delegation capability
 is absent, record `status: blocked`, render the report, report the blocker,
 and stop without invoking any subagent.
 
+Do not start a run while a business-context question is unanswered, and
+review findings against confirmed design decisions and feature status
+before scoring, as the skill describes. Source code may clarify what to
+evaluate, never how journey agents navigate.
+
 Delegate with Copilot's native task tool, one journey at a time. Do not use a
 shell script or CLI as an orchestrator. Only the owning subagent writes a
 `result.json` or `score.json`; never create or edit them yourself. If a
