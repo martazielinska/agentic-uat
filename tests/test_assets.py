@@ -220,3 +220,39 @@ def test_init_explores_then_asks_persona_and_tickbox_action_policy() -> None:
     assert "multi-select form" in contract
     assert "`All actions in the app`" in contract
     assert "Do not default to read-only when the app writes" in contract
+
+
+def test_business_context_gates_intake_and_runs_without_steering_journeys() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    init = SKILLS["uat-init"].read_text(encoding="utf-8")
+    run = SKILLS["uat-run"].read_text(encoding="utf-8")
+    journey = AGENTS["uat-journey"].read_text(encoding="utf-8")
+    for heading in ("Business context", "Codebase inspection", "Finding review"):
+        assert f"## {heading}" in contract
+    assert "UAT must not start while something a user would know" in contract
+    assert "Code is never UAT evidence" in contract
+    assert "Never pass routes, hidden URLs, selectors, API calls" in contract
+    for anchor in ("#business-context", "#codebase-inspection"):
+        assert anchor in init
+    for anchor in ("#business-context", "#codebase-inspection", "#finding-review"):
+        assert anchor in run
+    assert "Do not read the application's source code" in journey
+
+
+def test_browser_tool_constraints_prevent_observed_call_failures() -> None:
+    contract = " ".join(CONTRACT.read_text(encoding="utf-8").split())
+    assert "## Browser tool constraints" in contract
+    assert "const s = performance.now()" not in contract
+    assert "`timeoutMs` defaults to 5000" in contract
+    assert "never repeat a state-changing action blindly" in contract
+    assert "may not emit `download` events" not in contract
+    assert "## Downloads" in contract
+    assert "Never let one happen" in contract
+    assert "window.__uatDownloads" in contract
+    assert 'navigation.addEventListener("navigate"' in contract
+    assert "window.__uatArmed = true" in contract
+    assert "Never `page.goto` a file or attachment URL" in contract
+    assert "#downloads" in SKILLS["uat-init"].read_text(encoding="utf-8")
+    assert "#browser-tool-constraints" in AGENTS["uat-journey"].read_text(
+        encoding="utf-8"
+    )

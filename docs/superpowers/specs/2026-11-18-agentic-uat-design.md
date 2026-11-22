@@ -61,6 +61,17 @@ Required intake:
 - At least one journey per persona with a starting point, task, and
   observable success criteria.
 - Action policy: read-only by default and named, explicitly approved writes.
+- Business context: owner-supplied context files or folders, feature
+  availability, deliberate design decisions, and an answer to every
+  business-context question a user would know but the agent cannot infer.
+  Validation and runs fail while any question is unanswered.
+
+When the application repository is available, the coordinator may read it
+to establish development status and deliberate choices. Ambiguous gaps are
+questions for the owner. Code never shapes how journeys navigate, and it is
+never UAT evidence. Findings that contradict a confirmed design decision or
+concern an unavailable feature are excluded from the report with a recorded
+basis.
 
 Never persist passwords, tokens, cookies, browser profiles, or secret proxy
 URLs. Use user-assisted authentication. Keep run output out of source

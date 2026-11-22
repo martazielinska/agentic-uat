@@ -123,20 +123,135 @@ class Persona(Model):
         return self
 
 
+ContextSourceKind = Literal["owner", "business_context", "codebase"]
+
+
+class _SourcedFact(Model):
+    source: ContextSourceKind = Field(
+        description=(
+            "owner: answered by the application owner; business_context: a "
+            "supplied context document; codebase: the application repository."
+        )
+    )
+    reference: NonBlank | None = Field(
+        default=None,
+        description=(
+            "Document path, or repository path:line, commit, issue, or PR. "
+            "Required unless the owner answered."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def reference_for_documents(self) -> _SourcedFact:
+        if self.source != "owner" and self.reference is None:
+            raise ValueError(f"{self.source} facts require a reference")
+        return self
+
+
+class FeatureStatus(_SourcedFact):
+    id: Identifier
+    feature: NonBlank
+    status: Literal["available", "in_development", "planned", "out_of_scope"] = Field(
+        description=(
+            "Only available features are evaluated. Features in any other "
+            "status must not be reported as missing or defective."
+        )
+    )
+    notes: NonBlank | None = None
+
+
+class DesignDecision(_SourcedFact):
+    id: Identifier
+    decision: NonBlank = Field(
+        description="Deliberate application behavior that UAT must not report as a defect."
+    )
+
+
+class Clarification(Model):
+    id: Identifier
+    question: NonBlank = Field(
+        description="Business-context question a user would know but the agent cannot."
+    )
+    answer: NonBlank | None = Field(
+        description=(
+            "Owner's or context document's answer, including how to treat an "
+            "unknown. Null blocks validation and runs."
+        )
+    )
+    source: Literal["owner", "business_context"] | None
+    reference: NonBlank | None = Field(
+        default=None, description="Document path when answered by business context."
+    )
+
+    @model_validator(mode="after")
+    def answer_needs_source(self) -> Clarification:
+        if (self.answer is None) != (self.source is None):
+            raise ValueError("answered clarifications need a source, open ones none")
+        if self.source == "business_context" and self.reference is None:
+            raise ValueError("business_context answers require a reference")
+        return self
+
+
 class Project(Model):
-    schema_version: SchemaVersion = 1
+    schema_version: Literal[1, 2] = Field(
+        default=2,
+        description="Write 2. Version 1 is legacy memory without business context.",
+    )
     name: NonBlank
     base_url: AnyHttpUrl
     access: Access
     personas: list[Persona] = Field(min_length=1)
     approved_actions: list[NonBlank] = Field(default_factory=list)
+    context_sources: list[NonBlank] = Field(
+        default_factory=list,
+        description=(
+            "Owner-supplied business-context files or folders, relative to the "
+            "workspace or absolute."
+        ),
+    )
+    feature_status: list[FeatureStatus] = Field(default_factory=list)
+    design_decisions: list[DesignDecision] = Field(default_factory=list)
+    clarifications: list[Clarification] = Field(
+        default_factory=list,
+        description=(
+            "Required in version 2. Every question needs an answer before a run."
+        ),
+    )
 
     _safe_base_url = field_validator("base_url")(_safe_http_url)
 
     @model_validator(mode="after")
     def unique_persona_ids(self) -> Project:
         _ensure_unique((persona.id for persona in self.personas), "persona id")
+        _ensure_unique(self.context_sources, "context source")
+        _ensure_unique(
+            [
+                *(feature.id for feature in self.feature_status),
+                *(decision.id for decision in self.design_decisions),
+                *(clarification.id for clarification in self.clarifications),
+            ],
+            "feature, decision, and clarification id",
+        )
+        if self.schema_version >= 2 and "clarifications" not in self.model_fields_set:
+            raise ValueError(
+                "clarifications are required for schema version 2; record [] "
+                "only when no business-context question remains"
+            )
+        open_questions = [c.id for c in self.clarifications if c.answer is None]
+        if open_questions:
+            raise ValueError(
+                "unanswered business-context clarifications: "
+                f"{', '.join(open_questions)}; ask the owner before running UAT"
+            )
         return self
+
+    def exclusion_basis_ids(self) -> set[str]:
+        """Ids that may justify leaving a candidate finding out of the report."""
+        return {decision.id for decision in self.design_decisions} | {
+            feature.id
+            for feature in self.feature_status
+            if feature.status != "available"
+        }
 
 
 class Action(Model):
@@ -432,12 +547,46 @@ class ReportFinding(Model):
     screenshots: list[ReportScreenshot] = Field(default_factory=list)
 
 
+class ExcludedFinding(ReportSource):
+    basis: Identifier = Field(
+        description=(
+            "Id of a design decision, or a feature that is not available, in the "
+            "run's project memory, additional_decisions, or "
+            "additional_feature_status."
+        )
+    )
+    reason: NonBlank = Field(
+        description="How the finding contradicts that confirmed decision or status."
+    )
+
+
 class ReportContent(Model):
     schema_version: SchemaVersion = 1
     run_id: Identifier
     scope: NonBlank | None = None
     overview: NonBlank | None = None
     findings: list[ReportFinding]
+    additional_decisions: list[DesignDecision] = Field(
+        default_factory=list,
+        description=(
+            "Design decisions confirmed during this run, also added to "
+            "project.yaml for later runs."
+        ),
+    )
+    additional_feature_status: list[FeatureStatus] = Field(
+        default_factory=list,
+        description=(
+            "Feature availability confirmed during this run, also added to "
+            "project.yaml for later runs."
+        ),
+    )
+    excluded: list[ExcludedFinding] = Field(
+        default_factory=list,
+        description=(
+            "Recorded findings left out because they contradict a confirmed "
+            "design decision or concern a feature that is not available."
+        ),
+    )
 
 
 class RunManifest(Model):
